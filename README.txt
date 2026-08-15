@@ -13,22 +13,26 @@ startet `LSTRX.R4X` parallel und prueft, dass Range-Reads steigen, ohne den
 alten Voll-Datei-Zaehler zu erhoehen.
 
 Projektstruktur seit 0.51.21:
-- `build.zig` baut die Diagnose als eigenes SDK-Projekt.
+- `build.zig` baut die Diagnose samt 14 modulnahen Loader-Fixtures als
+  eigenes SDK-Projekt.
 - `build.zig.zon` bindet `r4os_sdk` als Paket.
 - `module.R4MF` beschreibt Artefakt, Zielpfad, R4L-Imports und Contract.
+- `Fixtures/` besitzt Generator, Zielmanifeste und Referenzhashes der
+  EXTMATH-, Resolver-, BADSTART- und Loader-Stresscontainer.
 
 Build:
 
-    cd Code\System\Diagnostics\LoaderDiag
-    ..\..\..\DevTools\Zig\zig.exe build
+    Build.bat
 
 Ergebnis:
 
-    Code\System\Diagnostics\LoaderDiag\zig-out\LOADERD.R4X
+    Der in Settings.R4S konfigurierte ARTIFACTS_ROOT enthaelt LOADERD.R4X
+    und seine 14 Testfixtures.
 
 Contract:
 - Build-Profil: `Zig/R4XStart`
 - R4XStart-Entry: `loaderd_main`
 - App-Klasse: `console`
-- R4L-Imports: `R4SYS`, `R4DEV`
+- R4L-Imports: `R4SYS`, `R4DEV`, `R4AUDIO`, `R4DESK`, `R4DRAW`, `R4NET`,
+  `EXTMATH`
 - Zielpfad im Image: `C:\R4OS\SOFTWARE\TERMINAL\DIAG\LOADERD.R4X`

@@ -1,4 +1,5 @@
 const std = @import("std");
+const fixtures = @import("Fixtures/build.zig");
 
 /// Eigenstaendiger Bau aus dem Manifest.
 ///
@@ -10,4 +11,5 @@ pub fn build(b: *std.Build) void {
     const sdk_dep = b.dependencyFromBuildZig(sdk_build, .{});
     const sdk = sdk_build.sdk(b, sdk_dep, .{});
     _ = sdk.addR4MF(b.path("module.R4MF"));
+    fixtures.add(b, sdk_build.build_api, sdk.builder, sdk_dep);
 }

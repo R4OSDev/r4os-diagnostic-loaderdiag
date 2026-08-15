@@ -1,0 +1,18 @@
+LoaderDiag fixture provenance
+=============================
+
+Fachliche Quelle: Commit 259cbfac272c47ac1a7828de973512d17b29ae10.
+
+Der Generator stammt aus den LOADERD-relevanten Teilen von Code/build.zig.
+Die Manifeste und Quellmarker stammen aus:
+
+- Tests/Fixture/R4LNegative
+- Tests/Fixture/R4M0Synthetic
+- Tests/Fixture/R4XImage
+
+In 0.64.18 wurden nur Besitzpfade und Markerkommentare auf das eigenstaendige
+LoaderDiag-Repository umgestellt. Payload, Imports, Exports, Relocations,
+Metadaten, Zielpfade und Image-Scope bleiben fachlich unveraendert.
+
+BASELINE.SHA256 enthaelt Groesse und SHA-256 der zuletzt aus dem eingefrorenen
+Altprojekt erzeugten 14 Referenzartefakte.
