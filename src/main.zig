@@ -284,7 +284,7 @@ fn checkR4LQueryFile(ctx: *const r4os.r4sys.Context, path: [*:0]const u8, expect
     const query_bytes = r4lQueryBytes(data) orelse return failCheck(ctx, "R4LQuery export bytes");
     const query = readR4LQuery(query_bytes);
     const query_ok = validateR4LQuery(query, expected_group, false);
-    const meta_ok = hasMeta(data, "feature=api-r4l") and hasMeta(data, "contract.abi=Code/System/SDK/Contract/ABI/R4LQuery.txt");
+    const meta_ok = hasMeta(data, "feature=api-r4l") and hasMeta(data, "contract.abi=r4os-contract/ABI/R4LQuery.txt");
     printCheck(ctx, "R4LQuery fields", query_ok);
     printCheck(ctx, "R4LQuery contract metadata", meta_ok);
     return r4m_ok and query_ok and meta_ok;
