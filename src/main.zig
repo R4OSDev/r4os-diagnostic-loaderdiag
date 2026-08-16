@@ -49,12 +49,7 @@ export fn loaderd_main(raw: *const r4os.abi.R4XStartContext) callconv(.c) i32 {
     ok = checkCurrentStartContract(&ctx, "C:\\R4OS\\SOFTWARE\\TERMINAL\\BEEP.R4X") and ok;
     ok = checkCurrentStartContract(&ctx, "C:\\R4OS\\SOFTWARE\\TERMINAL\\DIAG\\R4XSTARTD.R4X") and ok;
     ok = checkInvalidStartRejected(&ctx, "C:\\R4OS\\SOFTWARE\\TERMINAL\\DIAG\\BADSTART.R4X") and ok;
-    ok = checkR4LQueryFile(&ctx, "C:\\R4OS\\LIBS\\R4SYS.R4L", .r4sys) and ok;
-    ok = checkR4LQueryFile(&ctx, "C:\\R4OS\\LIBS\\R4DESK.R4L", .r4desk) and ok;
-    ok = checkR4LQueryFile(&ctx, "C:\\R4OS\\LIBS\\R4DRAW.R4L", .r4draw) and ok;
-    ok = checkR4LQueryFile(&ctx, "C:\\R4OS\\LIBS\\R4NET.R4L", .r4net) and ok;
-    ok = checkR4LQueryFile(&ctx, "C:\\R4OS\\LIBS\\R4AUDIO.R4L", .r4audio) and ok;
-    ok = checkR4LQueryFile(&ctx, "C:\\R4OS\\LIBS\\R4DEV.R4L", .r4dev) and ok;
+    ok = checkPlatformApiFilesAbsent(&ctx) and ok;
     ok = checkR4LQueryNegativeValidation(&ctx) and ok;
     ok = checkR4LResolverNegativeBootLog(&ctx) and ok;
     ok = checkR4D(&ctx, "C:\\R4OS\\DRIVERS\\EXAMPLE.R4D") and ok;
@@ -264,30 +259,19 @@ fn checkNamedRuntimeR4L(ctx: *const r4os.r4sys.Context, start: r4os.r4xstart.Con
     return call_ok;
 }
 
-fn r4lQueryFromImport(item: *const r4os.abi.R4XStartImport) ?*const r4os.abi.R4LQuery {
-    if (item.table == 0) return null;
-    const query: *const r4os.abi.R4LQuery = @ptrFromInt(item.table);
-    return query;
-}
-
-fn checkR4LQueryFile(ctx: *const r4os.r4sys.Context, path: [*:0]const u8, expected_group: r4os.abi.R4LGroup) bool {
-    var buf: [8192]u8 = undefined;
-    const len = ctx.fileRead(path, buf[0..]);
-    ctx.print("read ");
-    ctx.print(path);
-    ctx.print(": ");
-    ctx.printI32(len);
-    ctx.println(" bytes");
-    if (len < 64) return false;
-    const data = buf[0..@intCast(len)];
-    const r4m_ok = checkR4M(ctx, "R4L", data, 2, 1, 1);
-    const query_bytes = r4lQueryBytes(data) orelse return failCheck(ctx, "R4LQuery export bytes");
-    const query = readR4LQuery(query_bytes);
-    const query_ok = validateR4LQuery(query, expected_group, false);
-    const meta_ok = hasMeta(data, "feature=api-r4l") and hasMeta(data, "contract.abi=r4os-contract/ABI/R4LQuery.txt");
-    printCheck(ctx, "R4LQuery fields", query_ok);
-    printCheck(ctx, "R4LQuery contract metadata", meta_ok);
-    return r4m_ok and query_ok and meta_ok;
+fn checkPlatformApiFilesAbsent(ctx: *const r4os.r4sys.Context) bool {
+    const paths = [_][*:0]const u8{
+        "C:\\R4OS\\LIBS\\R4SYS.R4L",
+        "C:\\R4OS\\LIBS\\R4DESK.R4L",
+        "C:\\R4OS\\LIBS\\R4DRAW.R4L",
+        "C:\\R4OS\\LIBS\\R4NET.R4L",
+        "C:\\R4OS\\LIBS\\R4AUDIO.R4L",
+        "C:\\R4OS\\LIBS\\R4DEV.R4L",
+    };
+    var ok = true;
+    for (paths) |path| ok = (ctx.fileInfo(path) == null) and ok;
+    printCheck(ctx, "Built-in Platform API files absent", ok);
+    return ok;
 }
 
 fn checkR4LQueryNegativeValidation(ctx: *const r4os.r4sys.Context) bool {
@@ -296,7 +280,7 @@ fn checkR4LQueryNegativeValidation(ctx: *const r4os.r4sys.Context) bool {
         .abi_version = r4os.abi.r4l_abi_version,
         .size = r4os.abi.r4l_query_struct_size,
         .group = @intFromEnum(r4os.abi.R4LGroup.r4dev),
-        .kernel_bridge = 1,
+        .kernel_bridge = 0,
         .reserved = 0,
     };
     var wrong_version = base;
@@ -306,12 +290,12 @@ fn checkR4LQueryNegativeValidation(ctx: *const r4os.r4sys.Context) bool {
     var incompatible_table = base;
     incompatible_table.size = r4os.abi.r4l_query_struct_size - 8;
 
-    const version_ok = !validateR4LQuery(wrong_version, .r4dev, true);
-    const group_ok = !validateR4LQuery(wrong_group, .r4dev, true);
-    const table_ok = !validateR4LQuery(incompatible_table, .r4dev, true);
-    printCheck(ctx, "R4LQuery rejects wrong version", version_ok);
-    printCheck(ctx, "R4LQuery rejects wrong group", group_ok);
-    printCheck(ctx, "R4LQuery rejects incompatible table", table_ok);
+    const version_ok = !validateR4LQuery(wrong_version, .r4dev);
+    const group_ok = !validateR4LQuery(wrong_group, .r4dev);
+    const table_ok = !validateR4LQuery(incompatible_table, .r4dev);
+    printCheck(ctx, "Platform Query rejects wrong version", version_ok);
+    printCheck(ctx, "Platform Query rejects wrong group", group_ok);
+    printCheck(ctx, "Platform Query rejects incompatible table", table_ok);
     return version_ok and group_ok and table_ok;
 }
 
@@ -361,64 +345,13 @@ fn checkR4LResolverNegativeBootLog(ctx: *const r4os.r4sys.Context) bool {
         duplicate_export_ok and duplicate_provider_ok and malformed_table_ok and named_diagnostic_ok;
 }
 
-fn validateR4LQuery(query: r4os.abi.R4LQuery, expected_group: r4os.abi.R4LGroup, require_bridge: bool) bool {
+fn validateR4LQuery(query: r4os.abi.R4LQuery, expected_group: r4os.abi.R4LGroup) bool {
     return query.magic == r4os.abi.r4l_abi_magic and
         query.abi_version == r4os.abi.r4l_abi_version and
         query.size >= r4os.abi.r4l_query_struct_size and
         query.group == @intFromEnum(expected_group) and
-        (!require_bridge or query.kernel_bridge != 0) and
+        query.kernel_bridge == 0 and
         query.reserved == 0;
-}
-
-fn r4lQueryBytes(buf: []const u8) ?[]const u8 {
-    if (buf.len < 64) return null;
-    const section_off = readLe32(buf[16..20]);
-    const section_count = readLe32(buf[20..24]);
-    const export_off = readLe32(buf[32..36]);
-    const export_count = readLe32(buf[36..40]);
-    var i: usize = 0;
-    while (i < export_count) : (i += 1) {
-        const off = @as(usize, @intCast(export_off)) + i * 16;
-        if (off + 16 > buf.len) return null;
-        const name = zString(buf, readLe32(buf[off + 0 .. off + 4])) orelse return null;
-        if (!eq(name, "Query")) continue;
-        const section_index = readLe32(buf[off + 4 .. off + 8]);
-        const section_offset = readLe32(buf[off + 8 .. off + 12]);
-        if (section_index >= section_count) return null;
-        const section_record = @as(usize, @intCast(section_off)) + @as(usize, @intCast(section_index)) * 32;
-        if (section_record + 32 > buf.len) return null;
-        const file_off = readLe32(buf[section_record + 12 .. section_record + 16]);
-        const file_size = readLe32(buf[section_record + 16 .. section_record + 20]);
-        if (section_offset > file_size or r4os.abi.r4l_query_struct_size > file_size - section_offset) return null;
-        const query_off = @as(usize, @intCast(file_off)) + @as(usize, @intCast(section_offset));
-        const query_len: usize = @intCast(r4os.abi.r4l_query_struct_size);
-        if (query_off > buf.len or query_len > buf.len - query_off) return null;
-        return buf[query_off .. query_off + query_len];
-    }
-    return null;
-}
-
-fn readR4LQuery(bytes: []const u8) r4os.abi.R4LQuery {
-    return .{
-        .magic = readLe32(bytes[0..4]),
-        .abi_version = readLe32(bytes[4..8]),
-        .size = readLe32(bytes[8..12]),
-        .group = readLe32(bytes[12..16]),
-        .kernel_bridge = @intCast(readLe64(bytes[16..24])),
-        .reserved = readLe64(bytes[24..32]),
-    };
-}
-
-fn checkR4L(ctx: *const r4os.r4sys.Context, path: [*:0]const u8) bool {
-    var buf: [8192]u8 = undefined;
-    const len = ctx.fileRead(path, buf[0..]);
-    ctx.print("read ");
-    ctx.print(path);
-    ctx.print(": ");
-    ctx.printI32(len);
-    ctx.println(" bytes");
-    if (len < 64) return false;
-    return checkR4M(ctx, "R4L", buf[0..@intCast(len)], 2, 1, 1);
 }
 
 fn checkR4D(ctx: *const r4os.r4sys.Context, path: [*:0]const u8) bool {
@@ -1103,15 +1036,4 @@ fn readLe32(bytes: []const u8) u32 {
         (@as(u32, bytes[1]) << 8) |
         (@as(u32, bytes[2]) << 16) |
         (@as(u32, bytes[3]) << 24);
-}
-
-fn readLe64(bytes: []const u8) u64 {
-    return @as(u64, bytes[0]) |
-        (@as(u64, bytes[1]) << 8) |
-        (@as(u64, bytes[2]) << 16) |
-        (@as(u64, bytes[3]) << 24) |
-        (@as(u64, bytes[4]) << 32) |
-        (@as(u64, bytes[5]) << 40) |
-        (@as(u64, bytes[6]) << 48) |
-        (@as(u64, bytes[7]) << 56);
 }
