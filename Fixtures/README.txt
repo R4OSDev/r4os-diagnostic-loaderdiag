@@ -1,16 +1,15 @@
-LoaderDiag runtime fixtures
+﻿LoaderDiag Runtime Fixtures
 ===========================
 
-Diese 14 Artefakte sind ausschliesslich modulnahe Testressourcen fuer
-LOADERD.R4X. Sie sind keine eigenstaendigen Produktkomponenten und erhalten
-keine eigenen Repositories.
+These 14 artifacts are module-local test resources for LOADERD.R4X. They are
+not standalone product components and do not receive separate repositories.
 
-Der normale LoaderDiag-Build erzeugt gemeinsam mit LOADERD:
+The normal LoaderDiag build creates:
 
-- EXTMATH sowie acht Resolver-/Runtime-R4L-Fixtures,
-- BADSTART als ungueltigen R4XStart-Container,
-- LSTRX, LSTRL, LSTRD und LSTRP als grosse Loader-Stresscontainer.
+- EXTMATH and eight resolver or Runtime-R4L fixtures;
+- BADSTART as an invalid R4XStart container;
+- LSTRX, LSTRL, LSTRD, and LSTRP as large loader stress containers.
 
-Die Manifeste unter Manifests dokumentieren Ziel und IMAGE_SCOPE. Der Build
-nutzt bewusst rohe, deterministische Payloads aus Fixtures/build.zig und den
-gepinnten R4M021-Binaerfixtures des SDK.
+The manifests under Manifests define targets and IMAGE_SCOPE. Fixtures use
+deterministic payloads from Fixtures/build.zig and the pinned R4M021 binary
+fixtures supplied by the SDK.
