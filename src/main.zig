@@ -396,11 +396,18 @@ fn checkR4P(ctx: *const r4os.r4sys.Context, path: [*:0]const u8) bool {
 
 fn checkProtocolRuntime(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Context) bool {
     var ok = true;
-    ok = checkProtocolState(ctx, dev, "misc.smoke", .active) and ok;
-    ok = checkProtocolState(ctx, dev, "misc.conformance", .active) and ok;
-    ok = checkProtocolState(ctx, dev, "misc.example", .active) and ok;
-    ok = checkProtocolState(ctx, dev, "misc.baddep", .blocked) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.smoke", .loaded) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.conformance", .loaded) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.example", .loaded) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.baddep", .loaded) and ok;
+    ok = checkProtocolState(ctx, dev, "security.tls", .loaded) and ok;
     ok = checkExampleDispatch(ctx, dev) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.smoke", .active) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.example", .active) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.conformance", .loaded) and ok;
+    ok = checkBadDependencyDemand(ctx, dev) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.baddep", .blocked) and ok;
+    ok = checkRelocationWindowDemand(ctx, dev) and ok;
     return ok;
 }
 
@@ -424,8 +431,9 @@ fn checkLoaderStress(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Cont
     ok = checkLargeExport(ctx, r4d_path, "DriverInit", 1) and ok;
     ok = checkLargeExport(ctx, r4d_path, "DriverShutdown", 1) and ok;
     ok = checkLargeR4M(ctx, "Loader stress R4P", r4p_path, 4, 1, 5) and ok;
-    ok = checkProtocolState(ctx, dev, "misc.loaderstress", .active) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.loaderstress", .loaded) and ok;
     ok = checkLoaderStressDispatch(ctx, dev) and ok;
+    ok = checkProtocolState(ctx, dev, "misc.loaderstress", .active) and ok;
     ok = checkStressR4XStarts(ctx, dev, r4x_path) and ok;
     return ok;
 }
@@ -861,6 +869,90 @@ fn checkProtocolState(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Con
         ctx.write(" rc=");
         ctx.printI32(rc);
     }
+    ctx.println("");
+    return ok;
+}
+
+fn checkBadDependencyDemand(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Context) bool {
+    var input = [_]u8{0};
+    var output = [_]u8{0};
+    var in_buffer = r4os.abi.ProtocolBuffer{
+        .data = @ptrCast(&input),
+        .len = 0,
+        .capacity = input.len,
+        .flags = 0,
+        .reserved = 0,
+    };
+    var out_buffer = r4os.abi.ProtocolBuffer{
+        .data = @ptrCast(&output),
+        .len = 0,
+        .capacity = output.len,
+        .flags = 0,
+        .reserved = 0,
+    };
+    const rc = dev.protocolDispatch("misc.baddep", 1, &in_buffer, &out_buffer);
+    const ok = rc == -5;
+    ctx.write("  R4P missing dependency on demand: ");
+    ctx.write(if (ok) "OK" else "FAILED");
+    ctx.write(" rc=");
+    ctx.printI32(rc);
+    ctx.println("");
+    return ok;
+}
+
+fn checkRelocationWindowDemand(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Context) bool {
+    const path = "C:\\R4OS\\PROTOCOLS\\R4TLS.R4P";
+    var header: [64]u8 = undefined;
+    const data = readHeaderPrefix(ctx, path, header[0..]) orelse return failCheck(ctx, "R4P relocation-window header");
+    const relocation_count: u64 = readLe32(data[44..48]);
+    const before = dev.performanceSummary() orelse return failCheck(ctx, "R4P relocation-window perf before");
+
+    var input = [_]u8{0};
+    var output: [512]u8 = .{0} ** 512;
+    var in_buffer = r4os.abi.ProtocolBuffer{
+        .data = @ptrCast(&input),
+        .len = 0,
+        .capacity = input.len,
+        .flags = 0,
+        .reserved = 0,
+    };
+    var out_buffer = r4os.abi.ProtocolBuffer{
+        .data = @ptrCast(&output),
+        .len = 0,
+        .capacity = output.len,
+        .flags = 0,
+        .reserved = 0,
+    };
+    const rc = dev.protocolDispatch("security.tls", 1, &in_buffer, &out_buffer);
+    const after = dev.performanceSummary() orelse return failCheck(ctx, "R4P relocation-window perf after");
+    const range_delta = if (after.loader_file_range_reads >= before.loader_file_range_reads)
+        after.loader_file_range_reads - before.loader_file_range_reads
+    else
+        0;
+    const expected_windows = if (relocation_count == 0) 0 else 1 + (relocation_count - 1) / 170;
+    // The fixed allowance covers header, section, entry, import/export and
+    // metadata reads.  A historical per-relocation loader exceeds this bound
+    // by more than an order of magnitude for R4TLS.
+    const io_ok = relocation_count >= 170 and
+        range_delta > 0 and
+        range_delta <= expected_windows + 128 and
+        after.loader_file_full_reads == before.loader_file_full_reads;
+    const dispatch_ok = rc == 0 and out_buffer.len > 0;
+    const state_ok = checkProtocolState(ctx, dev, "security.tls", .active);
+    const ok = io_ok and dispatch_ok and state_ok;
+    printCheck(ctx, "R4M relocation-window demand load", ok);
+    ctx.write("  R4M demand I/O: relocations=");
+    ctx.printU64(relocation_count);
+    ctx.write(" windows=");
+    ctx.printU64(expected_windows);
+    ctx.write(" rangeReads=");
+    ctx.printU64(range_delta);
+    ctx.write(" fullReads=");
+    ctx.printU64(before.loader_file_full_reads);
+    ctx.write("->");
+    ctx.printU64(after.loader_file_full_reads);
+    ctx.write(" rc=");
+    ctx.printI32(rc);
     ctx.println("");
     return ok;
 }

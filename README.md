@@ -4,7 +4,7 @@
 
 ## Package
 
-- Version: `0.1.5`
+- Version: `0.1.7`
 - Image target: `/R4OS/SOFTWARE/TERMINAL/DIAG/LOADERD.R4X`
 - Image scope: `test`
 - Canonical project manifest: `module.R4MF`

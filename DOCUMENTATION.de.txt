@@ -12,6 +12,14 @@ Header, Tabellen, Import-/Export-Strings und Section-Ranges per `fileReadAt`,
 startet `LSTRX.R4X` parallel und prueft, dass Range-Reads steigen, ohne den
 alten Voll-Datei-Zaehler zu erhoehen.
 
+Seit 0.69.44 prueft die Diagnose den bedarfsgeladenen R4P-Vertrag. Noch
+unbenutzte Disk-Rollen muessen zunaechst `loaded` bleiben. Der erste Dispatch
+aktiviert die Rolle samt Abhaengigkeiten; ein fehlender Dependency-Pfad wird
+erst bei dieser Anforderung sichtbar und deterministisch `blocked`. Ein
+gezielter Start von `R4TLS.R4P` kontrolliert ausserdem, dass seine 1.458
+Relocations ueber zusammenhaengende Tabellenfenster gelesen werden und der
+alte Voll-Datei-Zaehler unveraendert bleibt.
+
 Projektstruktur seit 0.51.21:
 - `build.zig` baut die Diagnose samt 14 modulnahen Loader-Fixtures als
   eigenes SDK-Projekt.
