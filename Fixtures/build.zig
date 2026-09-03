@@ -1,8 +1,21 @@
 const std = @import("std");
 
 // Unknown Runtime-R4L with a 32-byte interface header and one relocated
-// function slot. The code implements value + 42 with the R4OS x86_64 C ABI.
-const runtime_r4l_code = [_]u8{ 0x48, 0x89, 0xF8, 0x48, 0x83, 0xC0, 0x2A, 0xC3 };
+// function slot. Besides value+42 it owns a short, sentinel-gated CPU loop
+// used solely by the SMP4 R4L-preemption acceptance. With the default zero
+// sentinel the extra function returns immediately, so LOADERD's ordinary
+// loader-stress starts retain their previous bounded behaviour.
+const runtime_r4l_add_code = [_]u8{ 0x48, 0x89, 0xF8, 0x48, 0x83, 0xC0, 0x2A, 0xC3 };
+const runtime_r4l_code = [_]u8{
+    0x48, 0x89, 0xF8, 0x48, 0x83, 0xC0, 0x2A, 0xC3,
+    0x48, 0x83, 0x3F, 0x03, 0x75, 0x1C,
+    0x48, 0xC7, 0x07, 0x01, 0x00, 0x00, 0x00,
+    0xB9, 0x00, 0x2D, 0x31, 0x01,
+    0x48, 0x83, 0x3F, 0x02, 0x74, 0x06,
+    0xF3, 0x90, 0xFF, 0xC9, 0x75, 0xF4,
+    0x48, 0x8B, 0x07, 0xC3,
+    0x31, 0xC0, 0xC3,
+};
 const runtime_r4l_data = [_]u8{
     0x52, 0x34, 0x49, 0x31, 0x01, 0x00, 0x00, 0x00,
     0x28, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
@@ -11,6 +24,7 @@ const runtime_r4l_data = [_]u8{
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x52, 0x34, 0x4C, 0x31, 0x01, 0x00, 0x00, 0x00,
     0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
@@ -25,16 +39,22 @@ pub fn add(
 ) void {
     const generated = b.addWriteFiles();
     const runtime_code = generated.add("EXTMATH.code.bin", runtime_r4l_code[0..]);
+    const runtime_add_code = generated.add("RUNTIME-ADD42.code.bin", runtime_r4l_add_code[0..]);
     const runtime_data = generated.add("EXTMATH.data.bin", runtime_r4l_data[0..]);
     const bad_table = generated.add("BADTAB.data.bin", runtime_r4l_bad_table[0..]);
 
     _ = r4os_build.addR4LRaw(b, .{
         .name = "EXTMATH",
-        .module_version = "0.1.0",
+        .module_version = "0.1.1",
         .code = runtime_code,
         .data = runtime_data,
         .builder = builder,
-        .exports = &.{ "API_V1:.data:0:1", "Query:.data:40:1" },
+        .exports = &.{
+            "API_V1:.data:0:1",
+            "Query:.data:40:1",
+            "PREEMPT_SPIN:.text:8:1",
+            "PREEMPT_FLAG:.data:72:1",
+        },
         .relocations = &.{"base_rel64:.data:32:.text:0:0"},
         .metadata = &.{
             "description=0.64.2 unknown named Runtime-R4L provider",
@@ -44,7 +64,7 @@ pub fn add(
     _ = r4os_build.addR4LRaw(b, .{
         .name = "DUPEXP",
         .module_version = "0.1.0",
-        .code = runtime_code,
+        .code = runtime_add_code,
         .builder = builder,
         .exports = &.{ "DUPLICATE:.text:0:1", "duplicate:.text:0:1" },
         .metadata = &.{
@@ -55,7 +75,7 @@ pub fn add(
     _ = r4os_build.addR4LRaw(b, .{
         .name = "BADTAB",
         .module_version = "0.1.0",
-        .code = runtime_code,
+        .code = runtime_add_code,
         .data = bad_table,
         .builder = builder,
         .exports = &.{"API_V1:.data:0:1"},
@@ -67,7 +87,7 @@ pub fn add(
     _ = r4os_build.addR4LRaw(b, .{
         .name = "NOSYM",
         .module_version = "0.1.0",
-        .code = runtime_code,
+        .code = runtime_add_code,
         .builder = builder,
         .imports = &.{"LIB021:NotThere:1"},
         .metadata = &.{
@@ -80,7 +100,7 @@ pub fn add(
         .module_name = "DUPMOD",
         .kind = "r4l",
         .extension = "R4L",
-        .code = runtime_code,
+        .code = runtime_add_code,
         .builder = builder,
         .metadata = &.{
             "description=0.64.2 duplicate module provider A",
@@ -92,7 +112,7 @@ pub fn add(
         .module_name = "DUPMOD",
         .kind = "r4l",
         .extension = "R4L",
-        .code = runtime_code,
+        .code = runtime_add_code,
         .builder = builder,
         .metadata = &.{
             "description=0.64.2 duplicate module provider B",
@@ -160,7 +180,10 @@ fn addLoaderStressModules(
     comptime r4os_build: type,
     builder: *std.Build.Step.Compile,
 ) void {
-    const r4x_code = generatedFile(b, "loader-stress/LSTRX.code.bin", "\x31\xc0\xc3");
+    const r4x_code = generatedFile(b, "loader-stress/LSTRX.code.bin",
+        "\x48\xbf\x00\x00\x00\x00\x00\x00\x00\x00" ++
+        "\x48\xb8\x00\x00\x00\x00\x00\x00\x00\x00" ++
+        "\xff\xd0\x48\x83\xf8\x01\x0f\x94\xc0\x0f\xb6\xc0\xc3");
     const r4l_code = generatedFile(b, "loader-stress/LSTRL.code.bin", "\x31\xc0\xc3");
     const r4d_code = generatedFile(b, "loader-stress/LSTRD.code.bin", "\x31\xc0\xc3\x31\xc0\xc3");
     const r4p_code = generatedFile(b, "loader-stress/LSTRP.code.bin", "\x31\xc0\xc3" ++
@@ -180,9 +203,19 @@ fn addLoaderStressModules(
         .code = r4x_code,
         .rodata = r4x_payload,
         .builder = builder,
-        .imports = &.{ "R4SYS:Query:1", "EXTMATH:API_V1:1" },
+        .imports = &.{
+            "R4SYS:Query:1",
+            "EXTMATH:API_V1:1",
+            "EXTMATH:PREEMPT_SPIN:1",
+            "EXTMATH:PREEMPT_FLAG:1",
+        },
         .exports = &.{"R4XStart:.text:0:1"},
+        .relocations = &.{
+            "import_slot64:.text:2:import3:0",
+            "import_slot64:.text:12:import2:0",
+        },
         .metadata = &.{
+            "module.version=0.1.2",
             "r4x.name=LSTRX",
             "r4x.class=console",
             "feature=program-module",

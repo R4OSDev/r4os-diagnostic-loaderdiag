@@ -1,7 +1,7 @@
 R4OS_MODULE_MANIFEST=2
 KIND=R4X
 NAME=LSTRX
-VERSION=0.1.1
+VERSION=0.1.2
 LANGUAGE=Zig
 SOURCE=src/main.zig
 ENTRY_MODE=lowlevel
@@ -9,6 +9,10 @@ APP_CLASS=console
 TARGET=/R4OS/SOFTWARE/TERMINAL/DIAG/LSTRX.R4X
 IMAGE_SCOPE=test
 IMPORT=R4SYS:Query:1
+IMPORT=EXTMATH:API_V1:1
+IMPORT=EXTMATH:PREEMPT_SPIN:1
+IMPORT=EXTMATH:PREEMPT_FLAG:1
 META=image.fixture=raw-root-build
+META=feature=runtime-r4l-preemption-fixture
 META=source.owner=Diagnostics/LoaderDiag/Fixtures
 META=fixture.artifact-owner=Fixtures/build.zig
