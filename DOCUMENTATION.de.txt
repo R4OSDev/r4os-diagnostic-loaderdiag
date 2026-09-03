@@ -12,6 +12,30 @@ Header, Tabellen, Import-/Export-Strings und Section-Ranges per `fileReadAt`,
 startet `LSTRX.R4X` parallel und prueft, dass Range-Reads steigen, ohne den
 alten Voll-Datei-Zaehler zu erhoehen.
 
+Seit 0.75.8 prueft LOADERD den gemeinsamen, auf zwei 4-KiB-Fenster begrenzten
+R4M0-Metadatenleser. Der R4DEV-v15-Snapshot trennt logische Metadatenzugriffe,
+Fenstertreffer und -fuellungen, physische Range-Bytes und direkte Grosszugriffe.
+Vier parallele LSTRX-Starts duerfen zusammen hoechstens 32 physische Reads
+benoetigen; die Abnahme misst 28 statt der vorherigen 100. Der R4TLS-Demandload
+mit 1.458 Relocations benoetigt 15 statt 108 Reads. Das entspricht 72 bzw.
+86 Prozent weniger synchronen VFS-Anforderungen, bei konstant 8 KiB
+Readerkapazitaet und unveraendert null Voll-Datei-Reads.
+
+Die vor dem Umbau festgehaltene Lesepfad-Baseline der Grossfixtures und die
+deterministische Nachzaehlung des neuen Pfads lauten:
+
+    R4X LSTRX:  25 -> 7 Reads je Start (Gastmessung)
+    R4L LSTRL:  16 -> 6 Reads einschliesslich Katalogprobe
+    R4D LSTRD:  31 -> 6 Reads einschliesslich Katalogprobe
+    R4P LSTRP:  94 -> 6 Reads einschliesslich Katalogprobe
+    R4P R4TLS: 108 -> 15 Reads beim Demandload (Gastmessung)
+
+Die R4L-/R4D-/LSTRP-Werte folgen den festen Header-, Tabellen-, Namens-,
+Section- und Katalogoperationen derselben Fixtures; LSTRX und R4TLS werden
+zusaetzlich im Standard- und SMP4-Gast ueber die oeffentlichen Zaehler
+abgenommen. Valide, alte, beschaedigte und grosse Container bleiben durch die
+bestehenden Fixture-, Contract- und Loader-Tests abgedeckt.
+
 Seit 0.69.44 prueft die Diagnose den bedarfsgeladenen R4P-Vertrag. Noch
 unbenutzte Disk-Rollen muessen zunaechst `loaded` bleiben. Der erste Dispatch
 aktiviert die Rolle samt Abhaengigkeiten; ein fehlender Dependency-Pfad wird

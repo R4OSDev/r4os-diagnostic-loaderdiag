@@ -425,6 +425,8 @@ fn checkProtocolRuntime(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.C
 const stress_min_file_size: u64 = 320 * 1024;
 const stress_min_section_payload: u64 = 300 * 1024;
 const stress_spawn_count: usize = 4;
+const metadata_window_capacity_bytes: u64 = 8 * 1024;
+const stress_max_range_reads_per_start: u64 = 8;
 
 fn checkLoaderStress(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Context) bool {
     var ok = true;
@@ -683,8 +685,24 @@ fn checkStressR4XStarts(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.C
     }
     ctx.sleepTicks(2);
     const after = dev.performanceSummary() orelse return failCheck(ctx, "Loader stress perf after");
-    const range_ok = after.loader_file_range_reads > before.loader_file_range_reads and
+    const range_delta = counterDelta(after.loader_file_range_reads, before.loader_file_range_reads);
+    const range_byte_delta = counterDelta(after.loader_file_range_read_bytes, before.loader_file_range_read_bytes);
+    const reader_delta = counterDelta(after.loader_metadata_reader_initializations, before.loader_metadata_reader_initializations);
+    const logical_delta = counterDelta(after.loader_metadata_logical_reads, before.loader_metadata_logical_reads);
+    const hit_delta = counterDelta(after.loader_metadata_window_hits, before.loader_metadata_window_hits);
+    const fill_delta = counterDelta(after.loader_metadata_window_fills, before.loader_metadata_window_fills);
+    const fill_byte_delta = counterDelta(after.loader_metadata_window_fill_bytes, before.loader_metadata_window_fill_bytes);
+    const range_ok = range_delta > 0 and
+        range_delta <= @as(u64, ids.len) * stress_max_range_reads_per_start and
+        range_byte_delta > 0 and
         after.loader_file_full_reads == before.loader_file_full_reads;
+    const reader_ok = reader_delta >= ids.len and
+        logical_delta > range_delta and
+        hit_delta > 0 and
+        fill_delta > 0 and
+        fill_delta <= range_delta and
+        fill_byte_delta > 0 and
+        after.loader_metadata_window_capacity_bytes == metadata_window_capacity_bytes;
     var cleaned_tasks: usize = 0;
     for (task_ids) |task_id| {
         if (!taskIdPresent(dev, after.task_count, task_id)) cleaned_tasks += 1;
@@ -694,15 +712,26 @@ fn checkStressR4XStarts(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.C
     // lifecycle assertion follows the exact four main-task IDs captured at
     // admission instead of accepting or rejecting an unrelated worker.
     const task_cleanup_ok = cleaned_tasks == task_ids.len;
-    const ok = exit_ok and range_ok and task_cleanup_ok;
+    const ok = exit_ok and range_ok and reader_ok and task_cleanup_ok;
     printCheck(ctx, "Loader stress parallel R4X starts", ok);
+    printCheck(ctx, "Loader stress bounded metadata reader", reader_ok);
     printCheck(ctx, "Loader stress task cleanup", task_cleanup_ok);
     ctx.write("  Loader stress starts=");
     ctx.printU64(ids.len);
     ctx.write(" rangeReads=");
-    ctx.printU64(before.loader_file_range_reads);
-    ctx.write("->");
-    ctx.printU64(after.loader_file_range_reads);
+    ctx.printU64(range_delta);
+    ctx.write(" bytes=");
+    ctx.printU64(range_byte_delta);
+    ctx.write(" readers=");
+    ctx.printU64(reader_delta);
+    ctx.write(" logical/hit/fill=");
+    ctx.printU64(logical_delta);
+    ctx.write("/");
+    ctx.printU64(hit_delta);
+    ctx.write("/");
+    ctx.printU64(fill_delta);
+    ctx.write(" fillBytes=");
+    ctx.printU64(fill_byte_delta);
     ctx.write(" fullReads=");
     ctx.printU64(after.loader_file_full_reads);
     ctx.write(" taskDead=");
@@ -817,11 +846,21 @@ fn checkLoaderPerformance(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev
 fn checkLoaderMemory(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Context) bool {
     if (!dev.hasFn("performance_summary")) return failCheck(ctx, "Loader memory API missing");
     const summary = dev.performanceSummary() orelse return failCheck(ctx, "Loader memory summary unavailable");
+    const contract_ok = summary.version == r4os.abi.performance_snapshot_version and
+        summary.size >= @sizeOf(r4os.abi.ProgramPerformanceSummary);
     const ready = (summary.flags & r4os.abi.performance_flag_loader_memory_ready) != 0;
     const idle_ok = summary.loader_file_active_buffers == 0 and
         summary.loader_file_reserved_bytes == 0 and
         summary.loader_file_committed_bytes == 0;
     const read_path_ok = summary.loader_file_range_reads > 0 and summary.loader_file_full_reads == 0;
+    const metadata_reader_ok = summary.loader_file_range_read_bytes > 0 and
+        summary.loader_metadata_reader_initializations > 0 and
+        summary.loader_metadata_logical_reads > summary.loader_metadata_window_fills and
+        summary.loader_metadata_window_hits > 0 and
+        summary.loader_metadata_window_fills > 0 and
+        summary.loader_metadata_window_fill_bytes > 0 and
+        summary.loader_file_range_read_bytes >= summary.loader_metadata_window_fill_bytes and
+        summary.loader_metadata_window_capacity_bytes == metadata_window_capacity_bytes;
     const peak_ok = summary.loader_file_peak_reserved_bytes >= summary.loader_file_peak_committed_bytes and
         summary.loader_file_peak_reserved_bytes >= summary.loader_file_reserved_bytes and
         summary.loader_file_peak_committed_bytes >= summary.loader_file_committed_bytes;
@@ -837,8 +876,9 @@ fn checkLoaderMemory(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Cont
         summary.loader_file_short_reads +%
         summary.loader_file_release_failures +%
         summary.loader_file_pressure_failures;
-    const ok = ready and idle_ok and read_path_ok and peak_ok and failure_ok;
+    const ok = contract_ok and ready and idle_ok and read_path_ok and metadata_reader_ok and peak_ok and failure_ok;
     printCheck(ctx, "Loader memory snapshot", ok);
+    printCheck(ctx, "Loader metadata-reader snapshot", metadata_reader_ok);
     ctx.write("  Loader memory: active=");
     ctx.printU64(summary.loader_file_active_buffers);
     ctx.write(" reserved=");
@@ -853,6 +893,16 @@ fn checkLoaderMemory(ctx: *const r4os.r4sys.Context, dev: *const r4os.r4dev.Cont
     ctx.printU64(summary.loader_file_full_reads);
     ctx.write("/");
     ctx.printU64(summary.loader_file_range_reads);
+    ctx.write(" bytes=");
+    ctx.printU64(summary.loader_file_range_read_bytes);
+    ctx.write(" metadata=");
+    ctx.printU64(summary.loader_metadata_logical_reads);
+    ctx.write("/");
+    ctx.printU64(summary.loader_metadata_window_hits);
+    ctx.write("/");
+    ctx.printU64(summary.loader_metadata_window_fills);
+    ctx.write(" capacity=");
+    ctx.printU64(summary.loader_metadata_window_capacity_bytes);
     ctx.write(" pressure=");
     ctx.printU64(summary.loader_file_pressure_reclaim_attempts);
     ctx.write("/");
@@ -940,13 +990,20 @@ fn checkRelocationWindowDemand(ctx: *const r4os.r4sys.Context, dev: *const r4os.
         after.loader_file_range_reads - before.loader_file_range_reads
     else
         0;
+    const logical_delta = counterDelta(after.loader_metadata_logical_reads, before.loader_metadata_logical_reads);
+    const hit_delta = counterDelta(after.loader_metadata_window_hits, before.loader_metadata_window_hits);
+    const fill_delta = counterDelta(after.loader_metadata_window_fills, before.loader_metadata_window_fills);
     const expected_windows = if (relocation_count == 0) 0 else 1 + (relocation_count - 1) / 170;
     // The fixed allowance covers header, section, entry, import/export and
     // metadata reads.  A historical per-relocation loader exceeds this bound
     // by more than an order of magnitude for R4TLS.
     const io_ok = relocation_count >= 170 and
         range_delta > 0 and
-        range_delta <= expected_windows + 128 and
+        range_delta <= expected_windows + 16 and
+        logical_delta >= relocation_count and
+        hit_delta > 0 and
+        fill_delta >= expected_windows and
+        fill_delta <= range_delta and
         after.loader_file_full_reads == before.loader_file_full_reads;
     const dispatch_ok = rc == 0 and out_buffer.len > 0;
     const state_ok = checkProtocolState(ctx, dev, "security.tls", .active);
@@ -958,6 +1015,12 @@ fn checkRelocationWindowDemand(ctx: *const r4os.r4sys.Context, dev: *const r4os.
     ctx.printU64(expected_windows);
     ctx.write(" rangeReads=");
     ctx.printU64(range_delta);
+    ctx.write(" metadataLogical/hit/fill=");
+    ctx.printU64(logical_delta);
+    ctx.write("/");
+    ctx.printU64(hit_delta);
+    ctx.write("/");
+    ctx.printU64(fill_delta);
     ctx.write(" fullReads=");
     ctx.printU64(before.loader_file_full_reads);
     ctx.write("->");
@@ -1103,6 +1166,10 @@ fn tableFits(buf_len: usize, raw_off: u32, raw_count: u32, stride: usize, requir
     const count: usize = @intCast(raw_count);
     if (off > buf_len) return false;
     return count <= (buf_len - off) / stride;
+}
+
+fn counterDelta(after: u64, before: u64) u64 {
+    return after -| before;
 }
 
 fn rangeInFile(file_size: u64, raw_off: u32, raw_size: u32) bool {
