@@ -215,8 +215,9 @@ fn addLoaderStressModules(
             "import_slot64:.text:12:import2:0",
         },
         .metadata = &.{
-            "module.version=0.1.2",
+            "module.version=0.1.3",
             "r4x.name=LSTRX",
+            "runtime.parallel=owned-v1",
             "r4x.class=console",
             "feature=program-module",
             "feature=loader-stress-0547",
